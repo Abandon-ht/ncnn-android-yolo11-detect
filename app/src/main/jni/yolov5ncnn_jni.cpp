@@ -26,6 +26,10 @@
 #include "net.h"
 #include "benchmark.h"
 
+#include <opencv2/opencv.hpp>
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+
 static ncnn::UnlockedPoolAllocator g_blob_pool_allocator;
 static ncnn::PoolAllocator g_workspace_pool_allocator;
 
@@ -81,74 +85,63 @@ DEFINE_LAYER_CREATOR(YoloV5Focus)
 
 struct Object
 {
-    float x;
-    float y;
-    float w;
-    float h;
+    cv::Rect_<float> rect;
     int label;
     float prob;
 };
 
 static inline float intersection_area(const Object& a, const Object& b)
 {
-    if (a.x > b.x + b.w || a.x + a.w < b.x || a.y > b.y + b.h || a.y + a.h < b.y)
-    {
-        // no intersection
-        return 0.f;
-    }
-
-    float inter_width = std::min(a.x + a.w, b.x + b.w) - std::max(a.x, b.x);
-    float inter_height = std::min(a.y + a.h, b.y + b.h) - std::max(a.y, b.y);
-
-    return inter_width * inter_height;
+    cv::Rect_<float> inter = a.rect & b.rect;
+    return inter.area();
 }
 
-static void qsort_descent_inplace(std::vector<Object>& faceobjects, int left, int right)
+static void qsort_descent_inplace(std::vector<Object>& objects, int left, int right)
 {
     int i = left;
     int j = right;
-    float p = faceobjects[(left + right) / 2].prob;
+    float p = objects[(left + right) / 2].prob;
 
     while (i <= j)
     {
-        while (faceobjects[i].prob > p)
+        while (objects[i].prob > p)
             i++;
 
-        while (faceobjects[j].prob < p)
+        while (objects[j].prob < p)
             j--;
 
         if (i <= j)
         {
             // swap
-            std::swap(faceobjects[i], faceobjects[j]);
+            std::swap(objects[i], objects[j]);
 
             i++;
             j--;
         }
     }
 
-    #pragma omp parallel sections
+//#pragma omp parallel sections
     {
-        #pragma omp section
+//#pragma omp section
         {
-            if (left < j) qsort_descent_inplace(faceobjects, left, j);
+            if (left < j) qsort_descent_inplace(objects, left, j);
         }
-        #pragma omp section
+//#pragma omp section
         {
-            if (i < right) qsort_descent_inplace(faceobjects, i, right);
+            if (i < right) qsort_descent_inplace(objects, i, right);
         }
     }
 }
 
-static void qsort_descent_inplace(std::vector<Object>& faceobjects)
+static void qsort_descent_inplace(std::vector<Object>& objects)
 {
-    if (faceobjects.empty())
+    if (objects.empty())
         return;
 
-    qsort_descent_inplace(faceobjects, 0, faceobjects.size() - 1);
+    qsort_descent_inplace(objects, 0, objects.size() - 1);
 }
 
-static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vector<int>& picked, float nms_threshold)
+static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vector<int>& picked, float nms_threshold, bool agnostic = false)
 {
     picked.clear();
 
@@ -157,7 +150,7 @@ static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vecto
     std::vector<float> areas(n);
     for (int i = 0; i < n; i++)
     {
-        areas[i] = faceobjects[i].w * faceobjects[i].h;
+        areas[i] = faceobjects[i].rect.area();
     }
 
     for (int i = 0; i < n; i++)
@@ -168,6 +161,9 @@ static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vecto
         for (int j = 0; j < (int)picked.size(); j++)
         {
             const Object& b = faceobjects[picked[j]];
+
+            if (!agnostic && a.label != b.label)
+                continue;
 
             // intersection over union
             float inter_area = intersection_area(a, b);
@@ -261,19 +257,70 @@ static void generate_proposals(const ncnn::Mat& anchors, int stride, const ncnn:
                     float x1 = pb_cx + pb_w * 0.5f;
                     float y1 = pb_cy + pb_h * 0.5f;
 
+                    cv::Rect_<float> bbox;
+                    bbox.x = x0;
+                    bbox.y = y0;
+                    bbox.width = x1 - x0;
+                    bbox.height = y1 - y0;
                     Object obj;
-                    obj.x = x0;
-                    obj.y = y0;
-                    obj.w = x1 - x0;
-                    obj.h = y1 - y0;
                     obj.label = class_index;
                     obj.prob = confidence;
+                    obj.rect = bbox;
 
                     objects.push_back(obj);
                 }
             }
         }
     }
+}
+
+static inline float clampf(float d, float min, float max)
+{
+    const float t = d < min ? min : d;
+    return t > max ? max : t;
+}
+
+static void parse_yolov8_detections(
+        float* inputs, float confidence_threshold,
+        int num_channels, int num_anchors, int num_labels,
+        int infer_img_width, int infer_img_height,
+        std::vector<Object>& objects)
+{
+    std::vector<Object> detections;
+    cv::Mat output = cv::Mat((int)num_channels, (int)num_anchors, CV_32F, inputs).t();
+
+    for (int i = 0; i < num_anchors; i++)
+    {
+        const float* row_ptr = output.row(i).ptr<float>();
+        const float* bboxes_ptr = row_ptr;
+        const float* scores_ptr = row_ptr + 4;
+        const float* max_s_ptr = std::max_element(scores_ptr, scores_ptr + num_labels);
+        float score = *max_s_ptr;
+        if (score > confidence_threshold)
+        {
+            float x = *bboxes_ptr++;
+            float y = *bboxes_ptr++;
+            float w = *bboxes_ptr++;
+            float h = *bboxes_ptr;
+
+            float x0 = clampf((x - 0.5f * w), 0.f, (float)infer_img_width);
+            float y0 = clampf((y - 0.5f * h), 0.f, (float)infer_img_height);
+            float x1 = clampf((x + 0.5f * w), 0.f, (float)infer_img_width);
+            float y1 = clampf((y + 0.5f * h), 0.f, (float)infer_img_height);
+
+            cv::Rect_<float> bbox;
+            bbox.x = x0;
+            bbox.y = y0;
+            bbox.width = x1 - x0;
+            bbox.height = y1 - y0;
+            Object object;
+            object.label = max_s_ptr - scores_ptr;
+            object.prob = score;
+            object.rect = bbox;
+            detections.push_back(object);
+        }
+    }
+    objects = detections;
 }
 
 extern "C" {
@@ -321,12 +368,15 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Init(JNIEnv* e
     AAssetManager* mgr = AAssetManager_fromJava(env, assetManager);
 
     yolov5.opt = opt;
+    yolov5.opt.use_fp16_packed = false;
+    yolov5.opt.use_fp16_storage = false;
+    yolov5.opt.use_fp16_arithmetic = false;
 
-    yolov5.register_custom_layer("YoloV5Focus", YoloV5Focus_layer_creator);
+//    yolov5.register_custom_layer("YoloV5Focus", YoloV5Focus_layer_creator);
 
     // init param
     {
-        int ret = yolov5.load_param(mgr, "yolov5s.param");
+        int ret = yolov5.load_param(mgr, "model.ncnn.param");
         if (ret != 0)
         {
             __android_log_print(ANDROID_LOG_DEBUG, "YoloV5Ncnn", "load_param failed");
@@ -336,7 +386,7 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Init(JNIEnv* e
 
     // init bin
     {
-        int ret = yolov5.load_model(mgr, "yolov5s.bin");
+        int ret = yolov5.load_model(mgr, "model.ncnn.bin");
         if (ret != 0)
         {
             __android_log_print(ANDROID_LOG_DEBUG, "YoloV5Ncnn", "load_model failed");
@@ -420,7 +470,7 @@ JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNI
 
         ex.set_vulkan_compute(use_gpu);
 
-        ex.input("images", in_pad);
+        ex.input("in0", in_pad);
 
         std::vector<Object> proposals;
 
@@ -429,59 +479,67 @@ JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNI
         // stride 8
         {
             ncnn::Mat out;
-            ex.extract("output", out);
+            ex.extract("out0", out);
 
-            ncnn::Mat anchors(6);
-            anchors[0] = 10.f;
-            anchors[1] = 13.f;
-            anchors[2] = 16.f;
-            anchors[3] = 30.f;
-            anchors[4] = 33.f;
-            anchors[5] = 23.f;
-
-            std::vector<Object> objects8;
-            generate_proposals(anchors, 8, in_pad, out, prob_threshold, objects8);
-
-            proposals.insert(proposals.end(), objects8.begin(), objects8.end());
+            std::vector<Object> objects32;
+            const int num_labels = 80; // COCO has detect 80 object labels.
+            parse_yolov8_detections(
+                    (float*)out.data, prob_threshold,
+                    out.h, out.w, num_labels,
+                    in_pad.w, in_pad.h,
+                    objects32);
+            proposals.insert(proposals.end(), objects32.begin(), objects32.end());
+//            ncnn::Mat anchors(6);
+//            anchors[0] = 10.f;
+//            anchors[1] = 13.f;
+//            anchors[2] = 16.f;
+//            anchors[3] = 30.f;
+//            anchors[4] = 33.f;
+//            anchors[5] = 23.f;
+//
+//            std::vector<Object> objects8;
+//            generate_proposals(anchors, 8, in_pad, out, prob_threshold, objects8);
+//
+//            proposals.insert(proposals.end(), objects8.begin(), objects8.end());
         }
 
         // stride 16
-        {
-            ncnn::Mat out;
-            ex.extract("781", out);
-
-            ncnn::Mat anchors(6);
-            anchors[0] = 30.f;
-            anchors[1] = 61.f;
-            anchors[2] = 62.f;
-            anchors[3] = 45.f;
-            anchors[4] = 59.f;
-            anchors[5] = 119.f;
-
-            std::vector<Object> objects16;
-            generate_proposals(anchors, 16, in_pad, out, prob_threshold, objects16);
-
-            proposals.insert(proposals.end(), objects16.begin(), objects16.end());
-        }
+//        {
+//            ncnn::Mat out;
+//            ex.extract("781", out);
+//
+//            ncnn::Mat anchors(6);
+//            anchors[0] = 30.f;
+//            anchors[1] = 61.f;
+//            anchors[2] = 62.f;
+//            anchors[3] = 45.f;
+//            anchors[4] = 59.f;
+//            anchors[5] = 119.f;
+//
+//            std::vector<Object> objects16;
+//            generate_proposals(anchors, 16, in_pad, out, prob_threshold, objects16);
+//
+//            proposals.insert(proposals.end(), objects16.begin(), objects16.end());
+//        }
 
         // stride 32
-        {
-            ncnn::Mat out;
-            ex.extract("801", out);
-
-            ncnn::Mat anchors(6);
-            anchors[0] = 116.f;
-            anchors[1] = 90.f;
-            anchors[2] = 156.f;
-            anchors[3] = 198.f;
-            anchors[4] = 373.f;
-            anchors[5] = 326.f;
-
-            std::vector<Object> objects32;
-            generate_proposals(anchors, 32, in_pad, out, prob_threshold, objects32);
-
-            proposals.insert(proposals.end(), objects32.begin(), objects32.end());
-        }
+//        {
+//            ncnn::Mat out;
+//            ex.extract("801", out);
+//
+//            ncnn::Mat anchors(6);
+//            anchors[0] = 116.f;
+//            anchors[1] = 90.f;
+//            anchors[2] = 156.f;
+//            anchors[3] = 198.f;
+//            anchors[4] = 373.f;
+//            anchors[5] = 326.f;
+//
+//            std::vector<Object> objects32;
+//            generate_proposals(anchors, 32, in_pad, out, prob_threshold, objects32);
+//
+//            proposals.insert(proposals.end(), objects32.begin(), objects32.end());
+//        }
 
         // sort all proposals by score from highest to lowest
         qsort_descent_inplace(proposals);
@@ -498,10 +556,10 @@ JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNI
             objects[i] = proposals[picked[i]];
 
             // adjust offset to original unpadded
-            float x0 = (objects[i].x - (wpad / 2)) / scale;
-            float y0 = (objects[i].y - (hpad / 2)) / scale;
-            float x1 = (objects[i].x + objects[i].w - (wpad / 2)) / scale;
-            float y1 = (objects[i].y + objects[i].h - (hpad / 2)) / scale;
+            float x0 = (objects[i].rect.x - (wpad / 2)) / scale;
+            float y0 = (objects[i].rect.y - (hpad / 2)) / scale;
+            float x1 = (objects[i].rect.x + objects[i].rect.width - (wpad / 2)) / scale;
+            float y1 = (objects[i].rect.y + objects[i].rect.height - (hpad / 2)) / scale;
 
             // clip
             x0 = std::max(std::min(x0, (float)(width - 1)), 0.f);
@@ -509,10 +567,10 @@ JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNI
             x1 = std::max(std::min(x1, (float)(width - 1)), 0.f);
             y1 = std::max(std::min(y1, (float)(height - 1)), 0.f);
 
-            objects[i].x = x0;
-            objects[i].y = y0;
-            objects[i].w = x1 - x0;
-            objects[i].h = y1 - y0;
+            objects[i].rect.x = x0;
+            objects[i].rect.y = y0;
+            objects[i].rect.width = x1 - x0;
+            objects[i].rect.height = y1 - y0;
         }
     }
 
@@ -535,10 +593,10 @@ JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNI
     {
         jobject jObj = env->NewObject(objCls, constructortorId, thiz);
 
-        env->SetFloatField(jObj, xId, objects[i].x);
-        env->SetFloatField(jObj, yId, objects[i].y);
-        env->SetFloatField(jObj, wId, objects[i].w);
-        env->SetFloatField(jObj, hId, objects[i].h);
+        env->SetFloatField(jObj, xId, objects[i].rect.x);
+        env->SetFloatField(jObj, yId, objects[i].rect.y);
+        env->SetFloatField(jObj, wId, objects[i].rect.width);
+        env->SetFloatField(jObj, hId, objects[i].rect.height);
         env->SetObjectField(jObj, labelId, env->NewStringUTF(class_names[objects[i].label]));
         env->SetFloatField(jObj, probId, objects[i].prob);
 

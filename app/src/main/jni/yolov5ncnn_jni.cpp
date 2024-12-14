@@ -459,8 +459,8 @@ Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNIEnv* env, jobject thiz, jobject
 
     // pad to target_size rectangle
     // yolov5/utils/datasets.py letterbox
-    int wpad = (w + 31) / 32 * 32 - w;
-    int hpad = (h + 31) / 32 * 32 - h;
+    int wpad = (target_size + 31) / 32 * 32 - w;
+    int hpad = (target_size + 31) / 32 * 32 - h;
     ncnn::Mat in_pad;
     ncnn::copy_make_border(in, in_pad, hpad / 2, hpad - hpad / 2, wpad / 2, wpad - wpad / 2,
                            ncnn::BORDER_CONSTANT, 114.f);

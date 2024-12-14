@@ -43,7 +43,8 @@ public:
         one_blob_only = true;
     }
 
-    virtual int forward(const ncnn::Mat& bottom_blob, ncnn::Mat& top_blob, const ncnn::Option& opt) const
+    virtual int
+    forward(const ncnn::Mat& bottom_blob, ncnn::Mat& top_blob, const ncnn::Option& opt) const
     {
         int w = bottom_blob.w;
         int h = bottom_blob.h;
@@ -57,7 +58,7 @@ public:
         if (top_blob.empty())
             return -100;
 
-        #pragma omp parallel for num_threads(opt.num_threads)
+        //#pragma omp parallel for num_threads(opt.num_threads)
         for (int p = 0; p < outc; p++)
         {
             const float* ptr = bottom_blob.channel(p % channels).row((p / channels) % 2) + ((p / channels) / 2);
@@ -120,13 +121,13 @@ static void qsort_descent_inplace(std::vector<Object>& objects, int left, int ri
         }
     }
 
-//#pragma omp parallel sections
+    //#pragma omp parallel sections
     {
-//#pragma omp section
+        //#pragma omp section
         {
             if (left < j) qsort_descent_inplace(objects, left, j);
         }
-//#pragma omp section
+        //#pragma omp section
         {
             if (i < right) qsort_descent_inplace(objects, i, right);
         }
@@ -141,7 +142,8 @@ static void qsort_descent_inplace(std::vector<Object>& objects)
     qsort_descent_inplace(objects, 0, objects.size() - 1);
 }
 
-static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vector<int>& picked, float nms_threshold, bool agnostic = false)
+static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vector<int>& picked,
+                              float nms_threshold, bool agnostic = false)
 {
     picked.clear();
 
@@ -183,7 +185,9 @@ static inline float sigmoid(float x)
     return static_cast<float>(1.f / (1.f + exp(-x)));
 }
 
-static void generate_proposals(const ncnn::Mat& anchors, int stride, const ncnn::Mat& in_pad, const ncnn::Mat& feat_blob, float prob_threshold, std::vector<Object>& objects)
+static void generate_proposals(const ncnn::Mat& anchors, int stride, const ncnn::Mat& in_pad,
+                               const ncnn::Mat& feat_blob, float prob_threshold,
+                               std::vector<Object>& objects)
 {
     const int num_grid = feat_blob.h;
 
@@ -281,10 +285,10 @@ static inline float clampf(float d, float min, float max)
 }
 
 static void parse_yolov8_detections(
-        float* inputs, float confidence_threshold,
-        int num_channels, int num_anchors, int num_labels,
-        int infer_img_width, int infer_img_height,
-        std::vector<Object>& objects)
+    float* inputs, float confidence_threshold,
+    int num_channels, int num_anchors, int num_labels,
+    int infer_img_width, int infer_img_height,
+    std::vector<Object>& objects)
 {
     std::vector<Object> detections;
     cv::Mat output = cv::Mat((int)num_channels, (int)num_anchors, CV_32F, inputs).t();
@@ -352,7 +356,8 @@ JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved)
 }
 
 // public native boolean Init(AssetManager mgr);
-JNIEXPORT jboolean JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Init(JNIEnv* env, jobject thiz, jobject assetManager)
+JNIEXPORT jboolean JNICALL
+Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Init(JNIEnv* env, jobject thiz, jobject assetManager)
 {
     ncnn::Option opt;
     opt.lightmode = true;
@@ -372,7 +377,7 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Init(JNIEnv* e
     yolov5.opt.use_fp16_storage = false;
     yolov5.opt.use_fp16_arithmetic = false;
 
-//    yolov5.register_custom_layer("YoloV5Focus", YoloV5Focus_layer_creator);
+    //    yolov5.register_custom_layer("YoloV5Focus", YoloV5Focus_layer_creator);
 
     // init param
     {
@@ -411,7 +416,9 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Init(JNIEnv* e
 }
 
 // public native Obj[] Detect(Bitmap bitmap, boolean use_gpu);
-JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNIEnv* env, jobject thiz, jobject bitmap, jboolean use_gpu)
+JNIEXPORT jobjectArray JNICALL
+Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNIEnv* env, jobject thiz, jobject bitmap,
+                                              jboolean use_gpu)
 {
     if (use_gpu == JNI_TRUE && ncnn::get_gpu_count() == 0)
     {
@@ -455,7 +462,8 @@ JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNI
     int wpad = (w + 31) / 32 * 32 - w;
     int hpad = (h + 31) / 32 * 32 - h;
     ncnn::Mat in_pad;
-    ncnn::copy_make_border(in, in_pad, hpad / 2, hpad - hpad / 2, wpad / 2, wpad - wpad / 2, ncnn::BORDER_CONSTANT, 114.f);
+    ncnn::copy_make_border(in, in_pad, hpad / 2, hpad - hpad / 2, wpad / 2, wpad - wpad / 2,
+                           ncnn::BORDER_CONSTANT, 114.f);
 
     // yolov5
     std::vector<Object> objects;
@@ -484,62 +492,62 @@ JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNI
             std::vector<Object> objects32;
             const int num_labels = 80; // COCO has detect 80 object labels.
             parse_yolov8_detections(
-                    (float*)out.data, prob_threshold,
-                    out.h, out.w, num_labels,
-                    in_pad.w, in_pad.h,
-                    objects32);
+                (float*)out.data, prob_threshold,
+                out.h, out.w, num_labels,
+                in_pad.w, in_pad.h,
+                objects32);
             proposals.insert(proposals.end(), objects32.begin(), objects32.end());
-//            ncnn::Mat anchors(6);
-//            anchors[0] = 10.f;
-//            anchors[1] = 13.f;
-//            anchors[2] = 16.f;
-//            anchors[3] = 30.f;
-//            anchors[4] = 33.f;
-//            anchors[5] = 23.f;
-//
-//            std::vector<Object> objects8;
-//            generate_proposals(anchors, 8, in_pad, out, prob_threshold, objects8);
-//
-//            proposals.insert(proposals.end(), objects8.begin(), objects8.end());
+            //            ncnn::Mat anchors(6);
+            //            anchors[0] = 10.f;
+            //            anchors[1] = 13.f;
+            //            anchors[2] = 16.f;
+            //            anchors[3] = 30.f;
+            //            anchors[4] = 33.f;
+            //            anchors[5] = 23.f;
+            //
+            //            std::vector<Object> objects8;
+            //            generate_proposals(anchors, 8, in_pad, out, prob_threshold, objects8);
+            //
+            //            proposals.insert(proposals.end(), objects8.begin(), objects8.end());
         }
 
         // stride 16
-//        {
-//            ncnn::Mat out;
-//            ex.extract("781", out);
-//
-//            ncnn::Mat anchors(6);
-//            anchors[0] = 30.f;
-//            anchors[1] = 61.f;
-//            anchors[2] = 62.f;
-//            anchors[3] = 45.f;
-//            anchors[4] = 59.f;
-//            anchors[5] = 119.f;
-//
-//            std::vector<Object> objects16;
-//            generate_proposals(anchors, 16, in_pad, out, prob_threshold, objects16);
-//
-//            proposals.insert(proposals.end(), objects16.begin(), objects16.end());
-//        }
+        //        {
+        //            ncnn::Mat out;
+        //            ex.extract("781", out);
+        //
+        //            ncnn::Mat anchors(6);
+        //            anchors[0] = 30.f;
+        //            anchors[1] = 61.f;
+        //            anchors[2] = 62.f;
+        //            anchors[3] = 45.f;
+        //            anchors[4] = 59.f;
+        //            anchors[5] = 119.f;
+        //
+        //            std::vector<Object> objects16;
+        //            generate_proposals(anchors, 16, in_pad, out, prob_threshold, objects16);
+        //
+        //            proposals.insert(proposals.end(), objects16.begin(), objects16.end());
+        //        }
 
         // stride 32
-//        {
-//            ncnn::Mat out;
-//            ex.extract("801", out);
-//
-//            ncnn::Mat anchors(6);
-//            anchors[0] = 116.f;
-//            anchors[1] = 90.f;
-//            anchors[2] = 156.f;
-//            anchors[3] = 198.f;
-//            anchors[4] = 373.f;
-//            anchors[5] = 326.f;
-//
-//            std::vector<Object> objects32;
-//            generate_proposals(anchors, 32, in_pad, out, prob_threshold, objects32);
-//
-//            proposals.insert(proposals.end(), objects32.begin(), objects32.end());
-//        }
+        //        {
+        //            ncnn::Mat out;
+        //            ex.extract("801", out);
+        //
+        //            ncnn::Mat anchors(6);
+        //            anchors[0] = 116.f;
+        //            anchors[1] = 90.f;
+        //            anchors[2] = 156.f;
+        //            anchors[3] = 198.f;
+        //            anchors[4] = 373.f;
+        //            anchors[5] = 326.f;
+        //
+        //            std::vector<Object> objects32;
+        //            generate_proposals(anchors, 32, in_pad, out, prob_threshold, objects32);
+        //
+        //            proposals.insert(proposals.end(), objects32.begin(), objects32.end());
+        //        }
 
         // sort all proposals by score from highest to lowest
         qsort_descent_inplace(proposals);
@@ -576,20 +584,27 @@ JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNI
 
     // objects to Obj[]
     static const char* class_names[] = {
-        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
-        "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-        "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-        "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
-        "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-        "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-        "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
-        "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-        "hair drier", "toothbrush"
-    };
+        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+        "traffic light",
+        "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse",
+        "sheep", "cow",
+        "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie",
+        "suitcase", "frisbee",
+        "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
+        "skateboard", "surfboard",
+        "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl",
+        "banana", "apple",
+        "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake",
+        "chair", "couch",
+        "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote",
+        "keyboard", "cell phone",
+        "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
+        "scissors", "teddy bear",
+        "hair drier", "toothbrush"};
 
     jobjectArray jObjArray = env->NewObjectArray(objects.size(), objCls, NULL);
 
-    for (size_t i=0; i<objects.size(); i++)
+    for (size_t i = 0; i < objects.size(); i++)
     {
         jobject jObj = env->NewObject(objCls, constructortorId, thiz);
 
@@ -608,5 +623,4 @@ JNIEXPORT jobjectArray JNICALL Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNI
 
     return jObjArray;
 }
-
 }

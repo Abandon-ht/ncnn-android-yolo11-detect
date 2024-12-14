@@ -1,6 +1,6 @@
 # ncnn-android-yolov5
 
-The YOLOv5 object detection
+The YOLO11 object detection
 
 this is a sample ncnn android project, it depends on ncnn library only
 

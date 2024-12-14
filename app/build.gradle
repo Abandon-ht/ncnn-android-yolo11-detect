@@ -2,9 +2,9 @@ apply plugin: 'com.android.application'
 
 android {
     compileSdkVersion 27
-    namespace 'com.tencent.yolov5ncnn'
+    namespace 'com.tencent.yolo11ncnn'
     defaultConfig {
-        applicationId "com.tencent.yolov5ncnn"
+        applicationId "com.tencent.yolo11ncnn"
         archivesBaseName = "$applicationId"
 
         ndk {

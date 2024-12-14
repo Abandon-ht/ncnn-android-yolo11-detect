@@ -35,55 +35,6 @@ static ncnn::PoolAllocator g_workspace_pool_allocator;
 
 static ncnn::Net yolov5;
 
-class YoloV5Focus : public ncnn::Layer
-{
-public:
-    YoloV5Focus()
-    {
-        one_blob_only = true;
-    }
-
-    virtual int
-    forward(const ncnn::Mat& bottom_blob, ncnn::Mat& top_blob, const ncnn::Option& opt) const
-    {
-        int w = bottom_blob.w;
-        int h = bottom_blob.h;
-        int channels = bottom_blob.c;
-
-        int outw = w / 2;
-        int outh = h / 2;
-        int outc = channels * 4;
-
-        top_blob.create(outw, outh, outc, 4u, 1, opt.blob_allocator);
-        if (top_blob.empty())
-            return -100;
-
-        //#pragma omp parallel for num_threads(opt.num_threads)
-        for (int p = 0; p < outc; p++)
-        {
-            const float* ptr = bottom_blob.channel(p % channels).row((p / channels) % 2) + ((p / channels) / 2);
-            float* outptr = top_blob.channel(p);
-
-            for (int i = 0; i < outh; i++)
-            {
-                for (int j = 0; j < outw; j++)
-                {
-                    *outptr = *ptr;
-
-                    outptr += 1;
-                    ptr += 2;
-                }
-
-                ptr += w;
-            }
-        }
-
-        return 0;
-    }
-};
-
-DEFINE_LAYER_CREATOR(YoloV5Focus)
-
 struct Object
 {
     cv::Rect_<float> rect;
@@ -341,7 +292,7 @@ static jfieldID probId;
 
 JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved)
 {
-    __android_log_print(ANDROID_LOG_DEBUG, "YoloV5Ncnn", "JNI_OnLoad");
+    __android_log_print(ANDROID_LOG_DEBUG, "Yolo11Ncnn", "JNI_OnLoad");
 
     ncnn::create_gpu_instance();
 
@@ -350,14 +301,14 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved)
 
 JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved)
 {
-    __android_log_print(ANDROID_LOG_DEBUG, "YoloV5Ncnn", "JNI_OnUnload");
+    __android_log_print(ANDROID_LOG_DEBUG, "Yolo11Ncnn", "JNI_OnUnload");
 
     ncnn::destroy_gpu_instance();
 }
 
 // public native boolean Init(AssetManager mgr);
 JNIEXPORT jboolean JNICALL
-Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Init(JNIEnv* env, jobject thiz, jobject assetManager)
+Java_com_tencent_yolo11ncnn_Yolo11Ncnn_Init(JNIEnv* env, jobject thiz, jobject assetManager)
 {
     ncnn::Option opt;
     opt.lightmode = true;
@@ -381,29 +332,29 @@ Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Init(JNIEnv* env, jobject thiz, jobject a
 
     // init param
     {
-        int ret = yolov5.load_param(mgr, "model.ncnn.param");
+        int ret = yolov5.load_param(mgr, "yolo11n.param");
         if (ret != 0)
         {
-            __android_log_print(ANDROID_LOG_DEBUG, "YoloV5Ncnn", "load_param failed");
+            __android_log_print(ANDROID_LOG_DEBUG, "Yolo11Ncnn", "load_param failed");
             return JNI_FALSE;
         }
     }
 
     // init bin
     {
-        int ret = yolov5.load_model(mgr, "model.ncnn.bin");
+        int ret = yolov5.load_model(mgr, "yolo11n.bin");
         if (ret != 0)
         {
-            __android_log_print(ANDROID_LOG_DEBUG, "YoloV5Ncnn", "load_model failed");
+            __android_log_print(ANDROID_LOG_DEBUG, "Yolo11Ncnn", "load_model failed");
             return JNI_FALSE;
         }
     }
 
     // init jni glue
-    jclass localObjCls = env->FindClass("com/tencent/yolov5ncnn/YoloV5Ncnn$Obj");
+    jclass localObjCls = env->FindClass("com/tencent/yolo11ncnn/Yolo11Ncnn$Obj");
     objCls = reinterpret_cast<jclass>(env->NewGlobalRef(localObjCls));
 
-    constructortorId = env->GetMethodID(objCls, "<init>", "(Lcom/tencent/yolov5ncnn/YoloV5Ncnn;)V");
+    constructortorId = env->GetMethodID(objCls, "<init>", "(Lcom/tencent/yolo11ncnn/Yolo11Ncnn;)V");
 
     xId = env->GetFieldID(objCls, "x", "F");
     yId = env->GetFieldID(objCls, "y", "F");
@@ -417,7 +368,7 @@ Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Init(JNIEnv* env, jobject thiz, jobject a
 
 // public native Obj[] Detect(Bitmap bitmap, boolean use_gpu);
 JNIEXPORT jobjectArray JNICALL
-Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNIEnv* env, jobject thiz, jobject bitmap,
+Java_com_tencent_yolo11ncnn_Yolo11Ncnn_Detect(JNIEnv* env, jobject thiz, jobject bitmap,
                                               jboolean use_gpu)
 {
     if (use_gpu == JNI_TRUE && ncnn::get_gpu_count() == 0)
@@ -497,57 +448,7 @@ Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNIEnv* env, jobject thiz, jobject
                 in_pad.w, in_pad.h,
                 objects32);
             proposals.insert(proposals.end(), objects32.begin(), objects32.end());
-            //            ncnn::Mat anchors(6);
-            //            anchors[0] = 10.f;
-            //            anchors[1] = 13.f;
-            //            anchors[2] = 16.f;
-            //            anchors[3] = 30.f;
-            //            anchors[4] = 33.f;
-            //            anchors[5] = 23.f;
-            //
-            //            std::vector<Object> objects8;
-            //            generate_proposals(anchors, 8, in_pad, out, prob_threshold, objects8);
-            //
-            //            proposals.insert(proposals.end(), objects8.begin(), objects8.end());
         }
-
-        // stride 16
-        //        {
-        //            ncnn::Mat out;
-        //            ex.extract("781", out);
-        //
-        //            ncnn::Mat anchors(6);
-        //            anchors[0] = 30.f;
-        //            anchors[1] = 61.f;
-        //            anchors[2] = 62.f;
-        //            anchors[3] = 45.f;
-        //            anchors[4] = 59.f;
-        //            anchors[5] = 119.f;
-        //
-        //            std::vector<Object> objects16;
-        //            generate_proposals(anchors, 16, in_pad, out, prob_threshold, objects16);
-        //
-        //            proposals.insert(proposals.end(), objects16.begin(), objects16.end());
-        //        }
-
-        // stride 32
-        //        {
-        //            ncnn::Mat out;
-        //            ex.extract("801", out);
-        //
-        //            ncnn::Mat anchors(6);
-        //            anchors[0] = 116.f;
-        //            anchors[1] = 90.f;
-        //            anchors[2] = 156.f;
-        //            anchors[3] = 198.f;
-        //            anchors[4] = 373.f;
-        //            anchors[5] = 326.f;
-        //
-        //            std::vector<Object> objects32;
-        //            generate_proposals(anchors, 32, in_pad, out, prob_threshold, objects32);
-        //
-        //            proposals.insert(proposals.end(), objects32.begin(), objects32.end());
-        //        }
 
         // sort all proposals by score from highest to lowest
         qsort_descent_inplace(proposals);
@@ -619,7 +520,7 @@ Java_com_tencent_yolov5ncnn_YoloV5Ncnn_Detect(JNIEnv* env, jobject thiz, jobject
     }
 
     double elasped = ncnn::get_current_time() - start_time;
-    __android_log_print(ANDROID_LOG_DEBUG, "YoloV5Ncnn", "%.2fms   detect", elasped);
+    __android_log_print(ANDROID_LOG_DEBUG, "Yolo11Ncnn", "%.2fms   detect", elasped);
 
     return jObjArray;
 }

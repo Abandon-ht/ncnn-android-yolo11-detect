@@ -12,12 +12,12 @@
 // CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package com.tencent.yolov5ncnn;
+package com.tencent.yolo11ncnn;
 
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 
-public class YoloV5Ncnn
+public class Yolo11Ncnn
 {
     public native boolean Init(AssetManager mgr);
 
@@ -34,6 +34,6 @@ public class YoloV5Ncnn
     public native Obj[] Detect(Bitmap bitmap, boolean use_gpu);
 
     static {
-        System.loadLibrary("yolov5ncnn");
+        System.loadLibrary("yolo11ncnn");
     }
 }

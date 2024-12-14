@@ -12,7 +12,7 @@
 // CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package com.tencent.yolov5ncnn;
+package com.tencent.yolo11ncnn;
 
 import android.app.Activity;
 import android.content.Intent;
@@ -31,7 +31,6 @@ import android.widget.Button;
 import android.widget.ImageView;
 
 import java.io.FileNotFoundException;
-import java.io.InputStream;
 import java.io.IOException;
 
 public class MainActivity extends Activity
@@ -42,7 +41,7 @@ public class MainActivity extends Activity
     private Bitmap bitmap = null;
     private Bitmap yourSelectedImage = null;
 
-    private YoloV5Ncnn yolov5ncnn = new YoloV5Ncnn();
+    private Yolo11Ncnn yolo11ncnn = new Yolo11Ncnn();
 
     /** Called when the activity is first created. */
     @Override
@@ -51,10 +50,10 @@ public class MainActivity extends Activity
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
 
-        boolean ret_init = yolov5ncnn.Init(getAssets());
+        boolean ret_init = yolo11ncnn.Init(getAssets());
         if (!ret_init)
         {
-            Log.e("MainActivity", "yolov5ncnn Init failed");
+            Log.e("MainActivity", "yolo11ncnn Init failed");
         }
 
         imageView = (ImageView) findViewById(R.id.imageView);
@@ -76,7 +75,7 @@ public class MainActivity extends Activity
                 if (yourSelectedImage == null)
                     return;
 
-                YoloV5Ncnn.Obj[] objects = yolov5ncnn.Detect(yourSelectedImage, false);
+                Yolo11Ncnn.Obj[] objects = yolo11ncnn.Detect(yourSelectedImage, false);
 
                 showObjects(objects);
             }
@@ -89,14 +88,14 @@ public class MainActivity extends Activity
                 if (yourSelectedImage == null)
                     return;
 
-                YoloV5Ncnn.Obj[] objects = yolov5ncnn.Detect(yourSelectedImage, true);
+                Yolo11Ncnn.Obj[] objects = yolo11ncnn.Detect(yourSelectedImage, true);
 
                 showObjects(objects);
             }
         });
     }
 
-    private void showObjects(YoloV5Ncnn.Obj[] objects)
+    private void showObjects(Yolo11Ncnn.Obj[] objects)
     {
         if (objects == null)
         {
